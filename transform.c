@@ -9,6 +9,7 @@
 // @NOTE: Put transformer functions prototypes here
 static bool factor_difference_of_squares(Expression* const expression);
 static bool fold_multipliers_to_diff_of_squares(Expression* const expression);
+static bool factor_sum_of_cubes(Expression* const expression);
 
 // Make deep copy of a given expression.
 static Expression* expression_copy(const Expression* const expression);
@@ -32,6 +33,7 @@ void expand_expression(Expression* const expression)
 
 	// @NOTE: Put expander transformer functions here
 	factor_difference_of_squares(expression);
+	factor_sum_of_cubes(expression);
 }
 
 double evaluate_expression(const Expression* const expression)
@@ -310,6 +312,127 @@ static bool fold_multipliers_to_diff_of_squares(Expression* const expression)
 	return false;
 }
 
+static bool factor_sum_of_cubes(Expression* const expr)
+{
+    assert(expr != NULL);
+
+    switch (expr->type) {
+        case ExpressionType_Unary: {
+            UnaryExpression* const unary_expr = (UnaryExpression*)expr;
+            return factor_sum_of_cubes(unary_expr->subexpression);
+        } break;
+
+        case ExpressionType_Binary: {
+            BinaryExpression* const bin_expr = (BinaryExpression*)expr;
+
+            const bool found_in_subexprs = factor_sum_of_cubes(bin_expr->left) |
+                                           factor_sum_of_cubes(bin_expr->right);
+
+            if (bin_expr->operator == TokenType_Plus) {
+                Expression* term_x = NULL;
+                Expression* term_y = NULL;
+                bool left_is_cube = false;
+                bool right_is_cube = false;
+
+                if (bin_expr->left->type == ExpressionType_Binary) {
+                    BinaryExpression* const left_bin = (BinaryExpression*)bin_expr->left;
+
+                    if (left_bin->operator == TokenType_Exponent) {
+                        if (left_bin->right->type == ExpressionType_Literal) {
+                            Literal* const exponent_val = (Literal*)left_bin->right;
+
+                            if (exponent_val->tag == LiteralTag_Number) {
+                                if (fabs(exponent_val->number - 3.0) < DBL_EPSILON) {
+                                    left_is_cube = true;
+                                    term_x = left_bin->left;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (bin_expr->right->type == ExpressionType_Binary) {
+                    BinaryExpression* const right_bin = (BinaryExpression*)bin_expr->right;
+
+                    if (right_bin->operator == TokenType_Exponent) {
+                        if (right_bin->right->type == ExpressionType_Literal) {
+                            Literal* const exponent_val = (Literal*)right_bin->right;
+                            if (exponent_val->tag == LiteralTag_Number) {
+                                if (fabs(exponent_val->number - 3.0) < DBL_EPSILON) {
+                                    right_is_cube = true;
+                                    term_y = right_bin->left;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (left_is_cube && right_is_cube) {
+                    bin_expr->operator = TokenType_Multiply;
+
+                    BinaryExpression* const plus_expr = expression_binary_create(
+                        TokenType_Plus,
+                        expression_copy(term_x),
+                        expression_copy(term_y)
+                    );
+                    plus_expr->base.parenthesised = true;
+
+                    BinaryExpression* const x_squared = expression_binary_create(
+                        TokenType_Exponent,
+                        expression_copy(term_x),
+                        (Expression*)expression_literal_create_number(2.0)
+                    );
+                    x_squared->base.parenthesised = false;
+
+                    BinaryExpression* const xy_term = expression_binary_create(
+                        TokenType_Multiply,
+                        expression_copy(term_x),
+                        expression_copy(term_y)
+                    );
+                    UnaryExpression* const neg_xy = expression_unary_create(
+                        TokenType_Minus,
+                        (Expression*)xy_term
+                    );
+                    neg_xy->base.parenthesised = false;
+
+                    BinaryExpression* const y_squared = expression_binary_create(
+                        TokenType_Exponent,
+                        expression_copy(term_y),
+                        (Expression*)expression_literal_create_number(2.0)
+                    );
+                    y_squared->base.parenthesised = false;
+
+                    BinaryExpression* const xy_plus = expression_binary_create(
+                        TokenType_Plus,
+                        (Expression*)x_squared,
+                        (Expression*)neg_xy
+                    );
+                    BinaryExpression* const sum_expr = expression_binary_create(
+                        TokenType_Plus,
+                        (Expression*)xy_plus,
+                        (Expression*)y_squared
+                    );
+                    sum_expr->base.parenthesised = true;
+
+                    expression_destroy(&bin_expr->left);
+                    expression_destroy(&bin_expr->right);
+
+                    bin_expr->left = (Expression*)plus_expr;
+                    bin_expr->right = (Expression*)sum_expr;
+
+                    return true;
+                }
+            }
+
+            return found_in_subexprs;
+        } break;
+    }
+
+    return false;
+}
+
+
+
 //
 // Helper functions
 //
@@ -409,4 +532,3 @@ static bool expression_equal(const Expression* const lhs,
 
 	return false;
 }
-
